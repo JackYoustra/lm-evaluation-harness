@@ -3,7 +3,7 @@ import hashlib
 import json
 import logging
 import os
-from typing import Dict, List, Optional, Tuple, Type, TypeVar
+from typing import Callable, Dict, List, Optional, Tuple, Type, TypeVar
 
 import transformers
 from sqlitedict import SqliteDict
@@ -306,6 +306,88 @@ class CachingLM:
 
     def get_cache_hook(self):
         return CacheHook(self)
+
+class CipherLM(LM):
+    def __init__(self, base_lm: LM, encrypt: Callable, decrypt: Callable):
+        super().__init__()
+        self.base_lm = base_lm
+        self.encrypt = encrypt
+        self.decrypt = decrypt
+
+    def loglikelihood(self, requests) -> List[Tuple[float, bool]]:
+        encrypted_requests = []
+        for req in requests:
+            context, continuation = req.args
+            encrypted_context = self.encrypt(context)
+            encrypted_continuation = self.encrypt(continuation)
+            encrypted_req = req._replace(args=(encrypted_context, encrypted_continuation))
+            encrypted_requests.append(encrypted_req)
+
+        results = self.base_lm.loglikelihood(encrypted_requests)
+        # No need to decrypt loglikelihoods
+        return results
+
+    def loglikelihood_rolling(self, requests) -> List[Tuple[float]]:
+        encrypted_requests = []
+        for req in requests:
+            context, = req.args
+            encrypted_context = self.encrypt(context)
+            encrypted_req = req._replace(args=(encrypted_context,))
+            encrypted_requests.append(encrypted_req)
+
+        results = self.base_lm.loglikelihood_rolling(encrypted_requests)
+        # No need to decrypt loglikelihoods
+        return results
+
+    def generate_until(self, requests) -> List[str]:
+        encrypted_requests = []
+        for req in requests:
+            context, until = req.args
+            encrypted_context = self.encrypt(context)
+            # Note: we don't encrypt 'until' as it's used for stopping condition
+            encrypted_req = req._replace(args=(encrypted_context, until))
+            encrypted_requests.append(encrypted_req)
+
+        encrypted_results = self.base_lm.generate_until(encrypted_requests)
+        decrypted_results = [self.decrypt(result) for result in encrypted_results]
+        return decrypted_results
+
+    def apply_chat_template(self, chat_history: List[Dict[str, str]]) -> str:
+        # Encrypt each message in the chat history
+        encrypted_chat_history = [
+            {
+                "role": message["role"],
+                "content": self.encrypt(message["content"])
+            }
+            for message in chat_history
+        ]
+        # Apply the chat template of the base model
+        encrypted_result = self.base_lm.apply_chat_template(encrypted_chat_history)
+        # No need to decrypt here as this will be used as input to the model
+        return encrypted_result
+
+    @property
+    def rank(self):
+        return self.base_lm.rank
+
+    @property
+    def world_size(self):
+        return self.base_lm.world_size
+
+    @property
+    def tokenizer_name(self) -> str:
+        return self.base_lm.tokenizer_name
+
+    @property
+    def chat_template(self) -> str:
+        return self.base_lm.chat_template
+
+    def set_cache_hook(self, cache_hook) -> None:
+        self.base_lm.set_cache_hook(cache_hook)
+
+    def __getattr__(self, attr):
+        # Fallback to base_lm for any attributes not explicitly defined
+        return getattr(self.base_lm, attr)
 
 
 class TemplateLM(LM):
