@@ -324,16 +324,25 @@ class CipherLM(LM):
             assert tag not in text, f"LLaMA tag '{tag}' found in text to be encrypted. This is not allowed."
         return self.encrypt(text)
 
+    def _safe_decrypt(self, text: str) -> str:
+        llama_tags = [
+            "<|begin_of_text|>",
+            "<|start_header_id|>",
+        ]
+        for tag in llama_tags:
+            assert tag not in text, f"LLaMA tag '{tag}' found in text to be decrypted. This is not allowed."
+        return self.decrypt(text)
+
     def loglikelihood(self, requests) -> List[Tuple[float, bool]]:
         encrypted_requests = []
         for req in requests:
             context, continuation = req.args
-            encrypted_context = self._safe_encrypt(context)
+            # Only encrypt the continuation (document response)
             encrypted_continuation = self._safe_encrypt(continuation)
             encrypted_req = Instance(
                 request_type=req.request_type,
                 doc=req.doc,
-                arguments=(encrypted_context, encrypted_continuation),
+                arguments=(context, encrypted_continuation),  # context remains unencrypted
                 idx=req.idx,
                 metadata=req.metadata
             )
@@ -360,31 +369,15 @@ class CipherLM(LM):
         return results
 
     def generate_until(self, requests) -> List[str]:
-        encrypted_requests = []
-        for req in requests:
-            context, until = req.args
-            encrypted_context = self._safe_encrypt(context)
-            encrypted_req = Instance(
-                request_type=req.request_type,
-                doc=req.doc,
-                arguments=(encrypted_context, {"until": until}),
-                idx=req.idx,
-                metadata=req.metadata
-            )
-            encrypted_requests.append(encrypted_req)
-
-        encrypted_results = self.base_lm.generate_until(encrypted_requests)
-        decrypted_results = [self.decrypt(result) for result in encrypted_results]
-        return decrypted_results
-
-    # Other methods remain the same
+        results = self.base_lm.generate_until(requests)
+        return [self._safe_decrypt(result) for result in results]
 
     def apply_chat_template(self, chat_history: List[Dict[str, str]]) -> str:
-        # Encrypt each message in the chat history
+        # Encrypt each message in the chat history, except for system messages
         encrypted_chat_history = [
             {
                 "role": message["role"],
-                "content": self._safe_encrypt(message["content"])
+                "content": message["content"] if message["role"] == "system" else self._safe_encrypt(message["content"])
             }
             for message in chat_history
         ]
