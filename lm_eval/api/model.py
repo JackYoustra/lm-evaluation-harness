@@ -314,13 +314,22 @@ class CipherLM(LM):
         self.base_lm = base_lm
         self.encrypt = encrypt
         self.decrypt = decrypt
+    
+    def _safe_encrypt(self, text: str) -> str:
+        llama_tags = [
+            "<|begin_of_text|>",
+            "<|start_header_id|>",
+        ]
+        for tag in llama_tags:
+            assert tag not in text, f"LLaMA tag '{tag}' found in text to be encrypted. This is not allowed."
+        return self.encrypt(text)
 
     def loglikelihood(self, requests) -> List[Tuple[float, bool]]:
         encrypted_requests = []
         for req in requests:
             context, continuation = req.args
-            encrypted_context = self.encrypt(context)
-            encrypted_continuation = self.encrypt(continuation)
+            encrypted_context = self._safe_encrypt(context)
+            encrypted_continuation = self._safe_encrypt(continuation)
             encrypted_req = Instance(
                 request_type=req.request_type,
                 doc=req.doc,
@@ -337,7 +346,7 @@ class CipherLM(LM):
         encrypted_requests = []
         for req in requests:
             context, = req.args
-            encrypted_context = self.encrypt(context)
+            encrypted_context = self._safe_encrypt(context)
             encrypted_req = Instance(
                 request_type=req.request_type,
                 doc=req.doc,
@@ -354,7 +363,7 @@ class CipherLM(LM):
         encrypted_requests = []
         for req in requests:
             context, until = req.args
-            encrypted_context = self.encrypt(context)
+            encrypted_context = self._safe_encrypt(context)
             encrypted_req = Instance(
                 request_type=req.request_type,
                 doc=req.doc,
@@ -375,7 +384,7 @@ class CipherLM(LM):
         encrypted_chat_history = [
             {
                 "role": message["role"],
-                "content": self.encrypt(message["content"])
+                "content": self._safe_encrypt(message["content"])
             }
             for message in chat_history
         ]
