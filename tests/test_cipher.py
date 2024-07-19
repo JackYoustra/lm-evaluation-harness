@@ -1,5 +1,5 @@
 import pytest
-from lm_eval.api.model import LM
+from lm_eval.api.model import CipherLM
 from lm_eval.models.huggingface import HFLM
 from lm_eval.evaluator import simple_evaluate
 from lm_eval.api.instance import Instance
@@ -10,48 +10,6 @@ class SimpleCipher:
 
     def decrypt(self, text):
         return ''.join(chr((ord(c) - 1) % 256) for c in text)
-
-class CipherLM(LM):
-    def __init__(self, base_lm: LM, encrypt: callable, decrypt: callable):
-        super().__init__()
-        self.base_lm = base_lm
-        self.encrypt = encrypt
-        self.decrypt = decrypt
-
-    def loglikelihood(self, requests):
-        encrypted_requests = []
-        for req in requests:
-            context, continuation = req.args
-            encrypted_context = self.encrypt(context)
-            encrypted_continuation = self.encrypt(continuation)
-            encrypted_req = req._replace(args=(encrypted_context, encrypted_continuation))
-            encrypted_requests.append(encrypted_req)
-
-        results = self.base_lm.loglikelihood(encrypted_requests)
-        return results
-
-    def loglikelihood_rolling(self, requests):
-        encrypted_requests = []
-        for req in requests:
-            context, = req.args
-            encrypted_context = self.encrypt(context)
-            encrypted_req = req._replace(args=(encrypted_context,))
-            encrypted_requests.append(encrypted_req)
-
-        results = self.base_lm.loglikelihood_rolling(encrypted_requests)
-        return results
-
-    def generate_until(self, requests):
-        encrypted_requests = []
-        for req in requests:
-            context, until = req.args
-            encrypted_context = self.encrypt(context)
-            encrypted_req = req._replace(args=(encrypted_context, until))
-            encrypted_requests.append(encrypted_req)
-
-        encrypted_results = self.base_lm.generate_until(encrypted_requests)
-        decrypted_results = [self.decrypt(result) for result in encrypted_results]
-        return decrypted_results
 
 @pytest.fixture
 def cipher_lm():
@@ -97,7 +55,6 @@ def test_simple_evaluate_with_cipher():
         tasks=["hellaswag"],
         num_fewshot=0,
         batch_size=1,
-        device="cpu",
         cipher=SimpleCipher(),
     )
     assert "results" in results

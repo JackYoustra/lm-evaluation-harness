@@ -10,6 +10,7 @@ from sqlitedict import SqliteDict
 from tqdm import tqdm
 
 from lm_eval import utils
+from lm_eval.api.instance import Instance
 
 
 eval_logger = logging.getLogger("lm-eval")
@@ -320,11 +321,16 @@ class CipherLM(LM):
             context, continuation = req.args
             encrypted_context = self.encrypt(context)
             encrypted_continuation = self.encrypt(continuation)
-            encrypted_req = req._replace(args=(encrypted_context, encrypted_continuation))
+            encrypted_req = Instance(
+                request_type=req.request_type,
+                doc=req.doc,
+                arguments=(encrypted_context, encrypted_continuation),
+                idx=req.idx,
+                metadata=req.metadata
+            )
             encrypted_requests.append(encrypted_req)
 
         results = self.base_lm.loglikelihood(encrypted_requests)
-        # No need to decrypt loglikelihoods
         return results
 
     def loglikelihood_rolling(self, requests) -> List[Tuple[float]]:
@@ -332,11 +338,16 @@ class CipherLM(LM):
         for req in requests:
             context, = req.args
             encrypted_context = self.encrypt(context)
-            encrypted_req = req._replace(args=(encrypted_context,))
+            encrypted_req = Instance(
+                request_type=req.request_type,
+                doc=req.doc,
+                arguments=(encrypted_context,),
+                idx=req.idx,
+                metadata=req.metadata
+            )
             encrypted_requests.append(encrypted_req)
 
         results = self.base_lm.loglikelihood_rolling(encrypted_requests)
-        # No need to decrypt loglikelihoods
         return results
 
     def generate_until(self, requests) -> List[str]:
@@ -344,13 +355,20 @@ class CipherLM(LM):
         for req in requests:
             context, until = req.args
             encrypted_context = self.encrypt(context)
-            # Note: we don't encrypt 'until' as it's used for stopping condition
-            encrypted_req = req._replace(args=(encrypted_context, until))
+            encrypted_req = Instance(
+                request_type=req.request_type,
+                doc=req.doc,
+                arguments=(encrypted_context, {"until": until}),
+                idx=req.idx,
+                metadata=req.metadata
+            )
             encrypted_requests.append(encrypted_req)
 
         encrypted_results = self.base_lm.generate_until(encrypted_requests)
         decrypted_results = [self.decrypt(result) for result in encrypted_results]
         return decrypted_results
+
+    # Other methods remain the same
 
     def apply_chat_template(self, chat_history: List[Dict[str, str]]) -> str:
         # Encrypt each message in the chat history
